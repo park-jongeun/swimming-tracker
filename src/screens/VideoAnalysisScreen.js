@@ -563,7 +563,7 @@ const styles = StyleSheet.create({
   // Finished Overlay Styles
   finishedOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: theme.spacing.xl,
@@ -574,6 +574,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     width: '100%',
     marginBottom: 40,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: theme.spacing.md,
+    borderRadius: theme.borderRadius.lg,
   },
   slider: {
     flex: 1,
