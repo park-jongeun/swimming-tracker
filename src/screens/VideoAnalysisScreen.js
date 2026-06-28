@@ -113,13 +113,15 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
         { apiVersion: "v1beta" }
       );
 
-      const prompt = `너는 프로 수영 코치야. 영상을 스캔해서 레인줄의 색상 패턴(예: 출발/도착 양 끝 3m는 단색, 중간은 1m 단위 교차 등)을 시각적 지표로 활용해 수영자의 정밀한 위치를 파악해줘.
-다음 데이터를 분석해줘:
-1. 최초 출발 시점 'startTime' (밀리초)
-2. 도착 시점 'endTime' (밀리초)
-3. 수영자가 5m, 10m, 15m, 20m 지점을 각각 통과할 때의 타임스탬프(밀리초)를 'milestones' 배열로 추출해.
-분석 과정을 짧게 요약(reasoning)하고, 오직 아래와 같은 형태의 순수 JSON만 반환해.
-{"reasoning": "레인줄 색상을 분석하여...", "startTime": 1200, "milestones": [{"distance": 5, "timeMs": 4500}, {"distance": 10, "timeMs": 9000}, {"distance": 15, "timeMs": 14000}, {"distance": 20, "timeMs": 19500}], "endTime": 25400}`;
+      const prompt = `너는 프로 수영 코치야. 이 수영장의 규격은 ${poolLength}m야. 영상을 스캔해서 수영자의 위치와 속도를 추적해줘.
+수영장 환경(레인줄 색상, 5m 배영 깃발, 바닥 타일의 T자 라인, 25m 중앙 마커 등)에서 확인할 수 있는 **모든 시각적 지표**를 최대한 활용해.
+만약 긴 구간에서 시각적 지표가 보이지 않는다면, **수영자의 팔 젓기(스트로크 템포) 속도의 가감속 변화**를 분석해서 중간 통과 시간을 유추해.
+다음 데이터를 분석해서 순수 JSON으로 반환해:
+1. 'startTime' (밀리초): 도약 혹은 출발 시점
+2. 'endTime' (밀리초): 도착 시점
+3. 'milestones' 배열: 시각적 지표나 템포 변화로 식별/유추한 주요 거리(예: 5, 10, 15, 20... m)와 해당 지점을 통과한 시간(timeMs). (최소 2~3개 이상의 지점을 포함할 것)
+분석 과정을 1~2줄로 요약(reasoning)해.
+{"reasoning": "...", "startTime": 1200, "milestones": [{"distance": 5, "timeMs": 4500}, {"distance": 25, "timeMs": 22000}], "endTime": 45000}`;
 
       const result = await model.generateContent({
         contents: [{
