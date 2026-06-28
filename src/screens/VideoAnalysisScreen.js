@@ -163,9 +163,16 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
       } catch (err) {}
       
       Alert.alert("분석 오류", `Gemini API 요청 실패: ${e.message}${debugMsg}\\n(파일 크기나 네트워크를 확인해주세요)`);
-      setPhase('idle');
+      setPhase('error');
     }
   };
+
+  // 컴포넌트 마운트 시 즉시 영상 전송 시작 (idle 상태일 때만 1회 실행)
+  useEffect(() => {
+    if (phase === 'idle') {
+      uploadAndAnalyzeWithGemini();
+    }
+  }, []);
 
   const generateMockData = (swimDurationMs) => {
     const detailedData = [];
@@ -274,17 +281,7 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
           </View>
         )}
 
-        {phase === 'idle' && (
-          <View style={styles.bottomControls}>
-            <TouchableOpacity style={styles.aiBtn} onPress={uploadAndAnalyzeWithGemini}>
-              <Cpu color={theme.colors.background} size={28} />
-              <View>
-                <Text style={styles.aiBtnTitle}>Gemini 1.5 자동 분석 시작</Text>
-                <Text style={styles.aiBtnSub}>AI가 스스로 출발과 도착 시간을 찾아냅니다</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-        )}
+        {/* phase === 'idle' 였던 자동 분석 시작 버튼 삭제 */}
 
         {(phase === 'uploading' || phase === 'processing' || phase === 'generating') && (
           <View style={styles.loadingContainer}>
