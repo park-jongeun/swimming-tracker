@@ -113,11 +113,13 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
         { apiVersion: "v1beta" }
       );
 
-      const prompt = `너는 프로 수영 코치야. 영상을 스캔해서 다음 두 가지 순간을 찾아줘.
-1. 수영자가 출발을 위해 다이빙 대에서 발이 떨어지거나 벽을 차는 최초 출발 시점 'startTime' (밀리초).
-2. 수영을 마치고 반대편 벽에 신체 일부가 터치되는 도착 시점 'endTime' (밀리초).
-분석 과정을 1~2줄로 아주 짧게 요약(reasoning)한 후, 오직 아래와 같은 형태의 순수 JSON만 반환해.
-{"reasoning": "1.2초에 도약하고 25.4초에 벽에 터치함.", "startTime": 1200, "endTime": 25400}`;
+      const prompt = `너는 프로 수영 코치야. 영상을 스캔해서 레인줄의 색상 패턴(예: 출발/도착 양 끝 3m는 단색, 중간은 1m 단위 교차 등)을 시각적 지표로 활용해 수영자의 정밀한 위치를 파악해줘.
+다음 데이터를 분석해줘:
+1. 최초 출발 시점 'startTime' (밀리초)
+2. 도착 시점 'endTime' (밀리초)
+3. 수영자가 5m, 10m, 15m, 20m 지점을 각각 통과할 때의 타임스탬프(밀리초)를 'milestones' 배열로 추출해.
+분석 과정을 짧게 요약(reasoning)하고, 오직 아래와 같은 형태의 순수 JSON만 반환해.
+{"reasoning": "레인줄 색상을 분석하여...", "startTime": 1200, "milestones": [{"distance": 5, "timeMs": 4500}, {"distance": 10, "timeMs": 9000}, {"distance": 15, "timeMs": 14000}, {"distance": 20, "timeMs": 19500}], "endTime": 25400}`;
 
       const result = await model.generateContent({
         contents: [{
@@ -148,7 +150,7 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
       setStartTime(finalStart);
       setEndTime(finalEnd);
       
-      startAiAnalysisPlayback(finalStart, finalEnd);
+      startAiAnalysisPlayback(finalStart, finalEnd, parsed.milestones || []);
       
     } catch (e) {
       console.error(e);
@@ -174,31 +176,47 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
     }
   }, []);
 
-  const generateMockData = (swimDurationMs) => {
+  const generateRealData = (start, end, milestones) => {
     const detailedData = [];
-    let currentSpeed = 1.8;
+    
+    // milestones 배열 정렬 및 양끝점(start, end) 추가
+    const validMilestones = [
+      { distance: 0, timeMs: start },
+      ...(milestones || []).filter(m => m.distance > 0 && m.distance < poolLength && m.timeMs > start && m.timeMs < end).sort((a, b) => a.distance - b.distance),
+      { distance: poolLength, timeMs: end }
+    ];
 
     for (let m = 1; m <= poolLength; m++) {
-      if (m < 15) {
-        currentSpeed -= 0.02;
-      } else if (m < poolLength - 10) {
-        currentSpeed = 1.4 + Math.random() * 0.1;
-      } else {
-        currentSpeed -= 0.01;
-        if (m > poolLength - 5) currentSpeed += 0.05;
+      // m이 속한 구간 찾기
+      let prev = validMilestones[0];
+      let next = validMilestones[validMilestones.length - 1];
+      
+      for (let i = 0; i < validMilestones.length - 1; i++) {
+        if (m >= validMilestones[i].distance && m <= validMilestones[i+1].distance) {
+          prev = validMilestones[i];
+          next = validMilestones[i+1];
+          break;
+        }
+      }
+      
+      // 구간의 평균 속도 계산 (m/s)
+      let speed = 1.0; // 기본값
+      if (next.distance > prev.distance && next.timeMs > prev.timeMs) {
+        const distDiff = next.distance - prev.distance;
+        const timeDiffSec = (next.timeMs - prev.timeMs) / 1000;
+        speed = distDiff / timeDiffSec;
       }
       
       detailedData.push({
         distance: m,
-        speed: Math.max(0.5, currentSpeed)
+        speed: Math.max(0.1, speed)
       });
     }
     return detailedData;
   };
 
-  const startAiAnalysisPlayback = async (start, end) => {
-    const swimDurationMs = end - start;
-    const data = generateMockData(swimDurationMs);
+  const startAiAnalysisPlayback = async (start, end, milestones) => {
+    const data = generateRealData(start, end, milestones);
     setMockData(data);
     setPhase('analyzing');
     
@@ -308,7 +326,10 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
               <View style={styles.hudDivider} />
               <View style={styles.hudRow}>
                 <Zap color={theme.colors.secondary} size={24} />
-                <Text style={styles.hudLabel}>실시간 속도</Text>
+                <View style={{flex: 1, marginLeft: theme.spacing.sm}}>
+                  <Text style={styles.hudLabel}>실시간 속도</Text>
+                  <Text style={{color: theme.colors.primary, fontSize: 10, marginTop: 2, marginLeft: theme.spacing.sm}}>* 레인줄 정밀 분석 기반</Text>
+                </View>
                 <Text style={styles.hudValue}>{displaySpeed} <Text style={styles.hudUnit}>m/s</Text></Text>
               </View>
             </View>
