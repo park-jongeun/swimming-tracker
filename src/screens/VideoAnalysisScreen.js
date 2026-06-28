@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import { theme } from '../theme/theme';
-import { X, Activity, Zap, Play, Check, Cpu } from 'lucide-react-native';
+import { X, Activity, Zap, Play, Pause, Check, Cpu } from 'lucide-react-native';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Slider from '@react-native-community/slider';
 
@@ -16,6 +16,7 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
   const [mockData, setMockData] = useState([]);
   const [isFinished, setIsFinished] = useState(false);
   const [sliderValue, setSliderValue] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(true);
   
   const position = status.positionMillis || 0;
   const duration = status.durationMillis || 1;
@@ -24,6 +25,7 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
     setStatus(newStatus);
     if (phase === 'analyzing' && endTime && newStatus.positionMillis >= endTime && !isFinished) {
       setIsFinished(true);
+      setIsPlaying(false);
       if (videoRef.current) {
         videoRef.current.pauseAsync();
       }
@@ -32,6 +34,7 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
 
   const handleReplay = async () => {
     setIsFinished(false);
+    setIsPlaying(true);
     if (videoRef.current) {
       const prePlayTime = Math.max(0, startTime - 1500);
       await videoRef.current.playFromPositionAsync(prePlayTime);
@@ -42,6 +45,10 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
     if (videoRef.current) {
       await videoRef.current.setPositionAsync(val);
       setSliderValue(null);
+      if (isFinished && val < endTime) {
+        setIsFinished(false);
+        setIsPlaying(true);
+      }
     }
   };
 
@@ -287,6 +294,7 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
         useNativeControls={false}
         resizeMode={ResizeMode.CONTAIN}
         isLooping={false}
+        shouldPlay={isPlaying}
         onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
       />
       
@@ -353,21 +361,10 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
               </View>
             </View>
             
-            <View style={styles.progressContainer}>
-              <View style={[styles.progressBar, { width: `${Math.max(0, Math.min(100, progressPercent))}%` }]} />
-            </View>
-            
-            {position >= startTime && position <= endTime ? (
-              <Text style={styles.analyzingText}>AI 레인줄 분석(광학 흐름) 활성화 중...</Text>
-            ) : (
-              <Text style={styles.analyzingText}> </Text>
-            )}
-          </View>
-        )}
-
-        {phase === 'analyzing' && isFinished && (
-          <View style={styles.finishedOverlay}>
-            <View style={styles.sliderContainer}>
+            <View style={styles.controlsRow}>
+              <TouchableOpacity onPress={() => setIsPlaying(!isPlaying)} style={styles.playPauseBtn}>
+                {isPlaying ? <Pause color="white" size={20} /> : <Play color="white" size={20} fill="white" />}
+              </TouchableOpacity>
               <Text style={styles.sliderTime}>{formatTime(sliderValue !== null ? sliderValue : position)}</Text>
               <Slider
                 style={styles.slider}
@@ -382,6 +379,17 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
               />
               <Text style={styles.sliderTime}>{formatTime(duration)}</Text>
             </View>
+            
+            {position >= startTime && position <= endTime ? (
+              <Text style={styles.analyzingText}>AI 레인줄 분석(광학 흐름) 활성화 중...</Text>
+            ) : (
+              <Text style={styles.analyzingText}> </Text>
+            )}
+          </View>
+        )}
+
+        {phase === 'analyzing' && isFinished && (
+          <View style={styles.finishedOverlay}>
             <View style={styles.finishedActions}>
               <TouchableOpacity style={styles.replayBtn} onPress={handleReplay}>
                 <Play color={theme.colors.background} size={28} />
@@ -569,14 +577,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing.xl,
     zIndex: 10,
   },
-  sliderContainer: {
+  controlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     width: '100%',
-    marginBottom: 40,
+    marginBottom: 20,
     backgroundColor: 'rgba(0,0,0,0.5)',
     padding: theme.spacing.md,
     borderRadius: theme.borderRadius.lg,
+  },
+  playPauseBtn: {
+    marginRight: theme.spacing.md,
   },
   slider: {
     flex: 1,
