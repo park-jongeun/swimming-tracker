@@ -113,12 +113,11 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
         { apiVersion: "v1beta" }
       );
 
-      const prompt = `너는 프로 수영 코치야. 영상을 0초부터 끝까지 꼼꼼히 프레임 단위로 분석해줘.
-1. 수영자가 출발을 위해 다이빙 대에서 발이 떨어지거나 벽을 차는 정확한 순간을 찾아 'startTime'으로 지정해 (밀리초).
-2. 수영을 마치고 반대편 벽에 신체 일부가 터치되는 정확한 순간을 찾아 'endTime'으로 지정해 (밀리초).
-3. 분석 과정과 추론(reasoning)을 상세히 텍스트로 먼저 작성한 후, 시간을 도출해.
-오직 다음과 같은 형태의 JSON만 반환해. 마크다운이나 다른 텍스트는 절대 포함하지 마.
-{"reasoning": "0.0초부터 스캔한 결과, 1.2초(1200ms)에 수영자가 다이빙 대에서 도약함. 이후 25.4초(25400ms)에 반대편 벽에 터치함.", "startTime": 1200, "endTime": 25400}`;
+      const prompt = `너는 프로 수영 코치야. 영상을 스캔해서 다음 두 가지 순간을 찾아줘.
+1. 수영자가 출발을 위해 다이빙 대에서 발이 떨어지거나 벽을 차는 최초 출발 시점 'startTime' (밀리초).
+2. 수영을 마치고 반대편 벽에 신체 일부가 터치되는 도착 시점 'endTime' (밀리초).
+분석 과정을 1~2줄로 아주 짧게 요약(reasoning)한 후, 오직 아래와 같은 형태의 순수 JSON만 반환해.
+{"reasoning": "1.2초에 도약하고 25.4초에 벽에 터치함.", "startTime": 1200, "endTime": 25400}`;
 
       const result = await model.generateContent({
         contents: [{
@@ -292,7 +291,7 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
             <View style={styles.loadingCard}>
               <ActivityIndicator size="large" color={theme.colors.primary} />
               <Text style={styles.loadingTitle}>{getLoadingMessage()}</Text>
-              <Text style={styles.loadingSub}>비디오 크기에 따라 약간의 시간이 소요됩니다</Text>
+              <Text style={styles.loadingSub}>비디오 크기와 AI 추론에 따라 30초~1분 정도 소요될 수 있습니다.</Text>
             </View>
           </View>
         )}
