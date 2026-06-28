@@ -4,6 +4,7 @@ import { Video, ResizeMode } from 'expo-av';
 import { theme } from '../theme/theme';
 import { X, Activity, Zap, Play, Check, Cpu } from 'lucide-react-native';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import Slider from '@react-native-community/slider';
 
 export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFinish, onCancel }) {
   const videoRef = useRef(null);
@@ -14,6 +15,7 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
   const [endTime, setEndTime] = useState(null);
   const [mockData, setMockData] = useState([]);
   const [isFinished, setIsFinished] = useState(false);
+  const [sliderValue, setSliderValue] = useState(null);
   
   const position = status.positionMillis || 0;
   const duration = status.durationMillis || 1;
@@ -34,6 +36,21 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
       const prePlayTime = Math.max(0, startTime - 1500);
       await videoRef.current.playFromPositionAsync(prePlayTime);
     }
+  };
+
+  const handleSlidingComplete = async (val) => {
+    if (videoRef.current) {
+      await videoRef.current.setPositionAsync(val);
+      setSliderValue(null);
+    }
+  };
+
+  const formatTime = (ms) => {
+    if (isNaN(ms) || ms === null) return '00:00';
+    const totalSec = Math.floor(ms / 1000);
+    const m = Math.floor(totalSec / 60).toString().padStart(2, '0');
+    const s = (totalSec % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
   };
 
   const handleSaveAndExit = () => {
@@ -350,14 +367,31 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
 
         {phase === 'analyzing' && isFinished && (
           <View style={styles.finishedOverlay}>
-             <TouchableOpacity style={styles.replayBtn} onPress={handleReplay}>
-               <Play color={theme.colors.background} size={28} />
-               <Text style={styles.replayBtnText}>다시보기</Text>
-             </TouchableOpacity>
-             <TouchableOpacity style={styles.saveBtn} onPress={handleSaveAndExit}>
-               <Check color={theme.colors.background} size={28} />
-               <Text style={styles.saveBtnText}>저장 후 종료</Text>
-             </TouchableOpacity>
+            <View style={styles.sliderContainer}>
+              <Text style={styles.sliderTime}>{formatTime(sliderValue !== null ? sliderValue : position)}</Text>
+              <Slider
+                style={styles.slider}
+                minimumValue={0}
+                maximumValue={duration}
+                value={sliderValue !== null ? sliderValue : position}
+                onValueChange={setSliderValue}
+                onSlidingComplete={handleSlidingComplete}
+                minimumTrackTintColor={theme.colors.primary}
+                maximumTrackTintColor="rgba(255,255,255,0.3)"
+                thumbTintColor={theme.colors.primary}
+              />
+              <Text style={styles.sliderTime}>{formatTime(duration)}</Text>
+            </View>
+            <View style={styles.finishedActions}>
+              <TouchableOpacity style={styles.replayBtn} onPress={handleReplay}>
+                <Play color={theme.colors.background} size={28} />
+                <Text style={styles.replayBtnText}>다시보기</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.saveBtn} onPress={handleSaveAndExit}>
+                <Check color={theme.colors.background} size={28} />
+                <Text style={styles.saveBtnText}>저장 후 종료</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </SafeAreaView>
@@ -532,9 +566,29 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: theme.spacing.xl,
+    zIndex: 10,
+  },
+  sliderContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 40,
+  },
+  slider: {
+    flex: 1,
+    height: 40,
+    marginHorizontal: theme.spacing.md,
+  },
+  sliderTime: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 14,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  finishedActions: {
     flexDirection: 'row',
     gap: theme.spacing.xl,
-    zIndex: 10,
   },
   replayBtn: {
     backgroundColor: 'rgba(255,255,255,0.2)',
