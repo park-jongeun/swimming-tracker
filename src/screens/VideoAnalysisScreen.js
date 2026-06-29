@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Alert, Activity
 import { Video, ResizeMode } from 'expo-av';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { theme } from '../theme/theme';
-import { X, Activity, Zap, Play, Pause, Check } from 'lucide-react-native';
+import { X, Activity, Zap, Play, Pause, Check, ArrowLeft } from 'lucide-react-native';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Slider from '@react-native-community/slider';
 
@@ -19,11 +19,13 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
   const [sliderValue, setSliderValue] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  const [startCandidates, setStartCandidates] = useState([]); // [{timeMs, reason, thumbUri}]
+  const [startCandidates, setStartCandidates] = useState([]); // [{timeMs, reason, thumbUri, thumbWidth, thumbHeight}]
   const [endCandidates, setEndCandidates] = useState([]);
   const [allMilestones, setAllMilestones] = useState([]);
   const [selectedStartIdx, setSelectedStartIdx] = useState(null);
   const [selectedEndIdx, setSelectedEndIdx] = useState(null);
+  const [selectStep, setSelectStep] = useState('start'); // start | end
+  const [thumbAspectRatio, setThumbAspectRatio] = useState(9 / 16);
   
   const position = status.positionMillis || 0;
   const duration = status.durationMillis || 1;
@@ -75,15 +77,24 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
 
   const safeThumbnail = async (timeMs) => {
     try {
-      const { uri } = await VideoThumbnails.getThumbnailAsync(videoUri, {
+      const { uri, width, height } = await VideoThumbnails.getThumbnailAsync(videoUri, {
         time: Math.max(0, Math.floor(timeMs)),
         quality: 0.6,
       });
-      return uri;
+      return { uri, width, height };
     } catch (err) {
       console.warn('thumbnail failed', timeMs, err?.message);
       return null;
     }
+  };
+
+  const formatTimePrecise = (ms) => {
+    if (isNaN(ms) || ms == null) return '00:00.00';
+    const totalSec = Math.floor(ms / 1000);
+    const m = Math.floor(totalSec / 60).toString().padStart(2, '0');
+    const s = (totalSec % 60).toString().padStart(2, '0');
+    const cs = Math.floor((ms % 1000) / 10).toString().padStart(2, '0');
+    return `${m}:${s}.${cs}`;
   };
 
   const handleConfirmSelection = () => {
@@ -243,18 +254,31 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
       if (starts.length === 0) starts = [{ timeMs: 1000, reason: '기본값' }];
       if (ends.length === 0) ends = [{ timeMs: Math.max(starts[0].timeMs + 5000, duration - 1000), reason: '기본값' }];
 
-      const startsWithThumbs = await Promise.all(
-        starts.map(async (c) => ({ ...c, thumbUri: await safeThumbnail(c.timeMs) }))
+      const attachThumb = async (c) => {
+        const thumb = await safeThumbnail(c.timeMs);
+        return {
+          ...c,
+          thumbUri: thumb?.uri ?? null,
+          thumbWidth: thumb?.width ?? null,
+          thumbHeight: thumb?.height ?? null,
+        };
+      };
+      const startsWithThumbs = await Promise.all(starts.map(attachThumb));
+      const endsWithThumbs = await Promise.all(ends.map(attachThumb));
+
+      const firstWithDims = [...startsWithThumbs, ...endsWithThumbs].find(
+        c => c.thumbWidth && c.thumbHeight
       );
-      const endsWithThumbs = await Promise.all(
-        ends.map(async (c) => ({ ...c, thumbUri: await safeThumbnail(c.timeMs) }))
-      );
+      if (firstWithDims) {
+        setThumbAspectRatio(firstWithDims.thumbWidth / firstWithDims.thumbHeight);
+      }
 
       setStartCandidates(startsWithThumbs);
       setEndCandidates(endsWithThumbs);
       setAllMilestones(parsed.milestones || []);
       setSelectedStartIdx(0);
       setSelectedEndIdx(0);
+      setSelectStep('start');
       setPhase('selecting');
 
     } catch (e) {
@@ -414,69 +438,86 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
           </View>
         )}
 
-        {phase === 'selecting' && (
-          <View style={styles.selectingContainer}>
-            <ScrollView contentContainerStyle={styles.selectingScroll} showsVerticalScrollIndicator={false}>
-              <Text style={styles.selectingTitle}>AI가 찾은 후보 중 선택해주세요</Text>
+        {phase === 'selecting' && (() => {
+          const isLandscape = thumbAspectRatio > 1.05;
+          const currentList = selectStep === 'start' ? startCandidates : endCandidates;
+          const currentIdx = selectStep === 'start' ? selectedStartIdx : selectedEndIdx;
+          const setCurrentIdx = selectStep === 'start' ? setSelectedStartIdx : setSelectedEndIdx;
+          const stepTitle = selectStep === 'start' ? '출발 시점을 선택해주세요' : '도착 시점을 선택해주세요';
+          const stepHint = selectStep === 'start'
+            ? '머리가 움직이기 시작하거나 출발 신호가 들리는 순간'
+            : '손이 벽에 처음 닿는 순간';
+          const canAdvance = currentIdx !== null;
+          const isLastStep = selectStep === 'end';
 
-              <Text style={styles.selectingSection}>출발 시점 (머리 움직임 시작 / 출발 신호)</Text>
-              <View style={styles.candidateRow}>
-                {startCandidates.map((c, idx) => (
-                  <TouchableOpacity
-                    key={`s${idx}`}
-                    style={[styles.candidateCard, selectedStartIdx === idx && styles.candidateCardSelected]}
-                    onPress={() => setSelectedStartIdx(idx)}
-                    activeOpacity={0.8}
-                  >
-                    {c.thumbUri ? (
-                      <Image source={{ uri: c.thumbUri }} style={styles.candidateThumb} />
-                    ) : (
-                      <View style={[styles.candidateThumb, styles.candidateThumbPlaceholder]}>
-                        <Text style={styles.candidateThumbPlaceholderText}>썸네일 없음</Text>
-                      </View>
-                    )}
-                    <Text style={styles.candidateTime}>{formatTime(c.timeMs)}</Text>
-                    <Text style={styles.candidateReason} numberOfLines={2}>{c.reason || ''}</Text>
+          return (
+            <View style={styles.selectingContainer}>
+              <SafeAreaView style={{ flex: 1 }}>
+                <View style={styles.wizardHeader}>
+                  <TouchableOpacity onPress={onCancel} style={styles.iconBtn}>
+                    <X color={theme.colors.text} size={24} />
                   </TouchableOpacity>
-                ))}
-              </View>
+                  <Text style={styles.wizardStepIndicator}>{selectStep === 'start' ? '1 / 2  출발' : '2 / 2  도착'}</Text>
+                  {selectStep === 'end' ? (
+                    <TouchableOpacity onPress={() => setSelectStep('start')} style={styles.wizardBackBtn}>
+                      <ArrowLeft color={theme.colors.text} size={20} />
+                    </TouchableOpacity>
+                  ) : <View style={{ width: 40 }} />}
+                </View>
 
-              <Text style={styles.selectingSection}>도착 시점 (손이 벽에 닿는 순간)</Text>
-              <View style={styles.candidateRow}>
-                {endCandidates.map((c, idx) => (
+                <ScrollView contentContainerStyle={styles.selectingScroll} showsVerticalScrollIndicator={false}>
+                  <Text style={styles.selectingTitle}>{stepTitle}</Text>
+                  <Text style={styles.selectingHint}>{stepHint}</Text>
+
+                  <View style={isLandscape ? styles.candidateColumn : styles.candidateRow}>
+                    {currentList.map((c, idx) => (
+                      <TouchableOpacity
+                        key={`${selectStep}${idx}`}
+                        style={[
+                          isLandscape ? styles.candidateCardWide : styles.candidateCard,
+                          currentIdx === idx && styles.candidateCardSelected,
+                        ]}
+                        onPress={() => setCurrentIdx(idx)}
+                        activeOpacity={0.8}
+                      >
+                        {c.thumbUri ? (
+                          <Image
+                            source={{ uri: c.thumbUri }}
+                            style={[styles.candidateThumb, { aspectRatio: thumbAspectRatio }]}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <View style={[styles.candidateThumb, styles.candidateThumbPlaceholder, { aspectRatio: thumbAspectRatio }]}>
+                            <Text style={styles.candidateThumbPlaceholderText}>썸네일 없음</Text>
+                          </View>
+                        )}
+                        <Text style={styles.candidateTime}>{formatTimePrecise(c.timeMs)}</Text>
+                        <Text style={styles.candidateReason}>{c.reason || ''}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+
+                <View style={styles.wizardFooter}>
                   <TouchableOpacity
-                    key={`e${idx}`}
-                    style={[styles.candidateCard, selectedEndIdx === idx && styles.candidateCardSelected]}
-                    onPress={() => setSelectedEndIdx(idx)}
-                    activeOpacity={0.8}
+                    style={[styles.confirmBtn, !canAdvance && styles.confirmBtnDisabled]}
+                    onPress={() => {
+                      if (!canAdvance) return;
+                      if (isLastStep) handleConfirmSelection();
+                      else setSelectStep('end');
+                    }}
+                    disabled={!canAdvance}
                   >
-                    {c.thumbUri ? (
-                      <Image source={{ uri: c.thumbUri }} style={styles.candidateThumb} />
-                    ) : (
-                      <View style={[styles.candidateThumb, styles.candidateThumbPlaceholder]}>
-                        <Text style={styles.candidateThumbPlaceholderText}>썸네일 없음</Text>
-                      </View>
-                    )}
-                    <Text style={styles.candidateTime}>{formatTime(c.timeMs)}</Text>
-                    <Text style={styles.candidateReason} numberOfLines={2}>{c.reason || ''}</Text>
+                    <Check color={theme.colors.background} size={22} />
+                    <Text style={styles.confirmBtnText}>
+                      {isLastStep ? '이 구간으로 분석' : '다음: 도착 시점 선택'}
+                    </Text>
                   </TouchableOpacity>
-                ))}
-              </View>
-
-              <TouchableOpacity
-                style={[
-                  styles.confirmBtn,
-                  (selectedStartIdx === null || selectedEndIdx === null) && styles.confirmBtnDisabled,
-                ]}
-                onPress={handleConfirmSelection}
-                disabled={selectedStartIdx === null || selectedEndIdx === null}
-              >
-                <Check color={theme.colors.background} size={24} />
-                <Text style={styles.confirmBtnText}>이 구간으로 분석</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        )}
+                </View>
+              </SafeAreaView>
+            </View>
+          );
+        })()}
 
         {phase === 'analyzing' && (
           <View style={styles.realtimeOverlay}>
@@ -655,37 +696,67 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
   },
   
-  // Selecting Phase Styles
+  // Selecting Phase Styles (wizard)
   selectingContainer: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: 'rgba(0,0,0,0.92)',
+  },
+  wizardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.sm,
+    paddingBottom: theme.spacing.sm,
+  },
+  wizardStepIndicator: {
+    color: theme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  wizardBackBtn: {
+    padding: theme.spacing.sm,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: theme.borderRadius.round,
   },
   selectingScroll: {
-    padding: theme.spacing.lg,
-    paddingTop: theme.spacing.xl * 2.5,
-    paddingBottom: theme.spacing.xl,
+    paddingHorizontal: theme.spacing.lg,
+    paddingBottom: theme.spacing.lg,
   },
   selectingTitle: {
     color: theme.colors.text,
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '800',
     textAlign: 'center',
-    marginBottom: theme.spacing.lg,
+    marginTop: theme.spacing.sm,
   },
-  selectingSection: {
-    color: theme.colors.primary,
-    fontSize: 14,
-    fontWeight: '700',
-    marginTop: theme.spacing.lg,
-    marginBottom: theme.spacing.sm,
+  selectingHint: {
+    color: theme.colors.textMuted,
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: theme.spacing.xs,
+    marginBottom: theme.spacing.lg,
   },
   candidateRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: theme.spacing.sm,
   },
+  candidateColumn: {
+    flexDirection: 'column',
+    gap: theme.spacing.md,
+  },
   candidateCard: {
     flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.sm,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  candidateCardWide: {
+    width: '100%',
     backgroundColor: 'rgba(255,255,255,0.08)',
     borderRadius: theme.borderRadius.md,
     padding: theme.spacing.sm,
@@ -698,7 +769,6 @@ const styles = StyleSheet.create({
   },
   candidateThumb: {
     width: '100%',
-    aspectRatio: 9 / 16,
     borderRadius: theme.borderRadius.sm,
     backgroundColor: '#111',
   },
@@ -712,15 +782,21 @@ const styles = StyleSheet.create({
   },
   candidateTime: {
     color: theme.colors.text,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
-    marginTop: theme.spacing.xs,
+    marginTop: theme.spacing.sm,
     fontVariant: ['tabular-nums'],
   },
   candidateReason: {
     color: theme.colors.textMuted,
-    fontSize: 11,
+    fontSize: 12,
     marginTop: 2,
+    lineHeight: 16,
+  },
+  wizardFooter: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.sm,
+    paddingBottom: theme.spacing.lg,
   },
   confirmBtn: {
     backgroundColor: theme.colors.primary,
@@ -730,7 +806,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: theme.spacing.sm,
-    marginTop: theme.spacing.xl,
   },
   confirmBtnDisabled: {
     backgroundColor: 'rgba(255,255,255,0.2)',
