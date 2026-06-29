@@ -183,17 +183,28 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
       const modelsRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
       const modelsData = await modelsRes.json();
       
-      let targetModel = "gemini-2.5-flash"; // 최신 2.5를 기본값으로 변경
-      if (modelsData && modelsData.models) {
-        // v1beta에서 접근 가능한 모델 중 'flash'가 포함된 가장 최신 모델을 자동 선택
-        const validModel = modelsData.models.find(m => 
-          (m.name.includes('gemini-2.5-flash') || m.name.includes('gemini-3.5-flash') || m.name.includes('gemini-2.0-flash') || m.name.includes('gemini-flash')) && 
-          m.supportedGenerationMethods && 
-          m.supportedGenerationMethods.includes('generateContent')
-        );
-        
-        if (validModel) {
-          targetModel = validModel.name.replace('models/', '');
+      // Pro 우선, Flash는 폴백. 영상 시점 추론(짧고 빠른 동작)은 Pro가 훨씬 정확함.
+      const modelPriority = [
+        'gemini-2.5-pro',
+        'gemini-2.0-pro',
+        'gemini-1.5-pro',
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash',
+      ];
+      let targetModel = 'gemini-2.5-pro';
+      if (modelsData && Array.isArray(modelsData.models)) {
+        for (const pref of modelPriority) {
+          const found = modelsData.models.find(m =>
+            m.name &&
+            m.name.includes(pref) &&
+            m.supportedGenerationMethods &&
+            m.supportedGenerationMethods.includes('generateContent')
+          );
+          if (found) {
+            targetModel = found.name.replace('models/', '');
+            break;
+          }
         }
       }
 
@@ -251,6 +262,10 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
               fileData: {
                 mimeType: uploadData.file.mimeType,
                 fileUri: fileUri
+              },
+              // Gemini 기본 1fps 샘플링은 0.6초짜리 다이브를 놓침. 5fps로 올려 시점 추론 정확도 확보.
+              videoMetadata: {
+                fps: 5
               }
             },
             { text: prompt }
