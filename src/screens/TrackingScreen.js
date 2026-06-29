@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Speech from 'expo-speech';
 import { theme } from '../theme/theme';
@@ -14,12 +14,16 @@ export default function TrackingScreen({ poolLength, onFinish, onCancel }) {
   
   const timerRef = useRef(null);
   const startTimeRef = useRef(null);
+  const timeoutsRef = useRef([]);
 
   useEffect(() => {
     if (!permission) {
       requestPermission();
     }
-    return () => clearInterval(timerRef.current);
+    return () => {
+      clearInterval(timerRef.current);
+      timeoutsRef.current.forEach(clearTimeout);
+    };
   }, [permission]);
 
   const formatTime = (ms) => {
@@ -32,29 +36,32 @@ export default function TrackingScreen({ poolLength, onFinish, onCancel }) {
 
   const startRecordingSequence = () => {
     setStartupPhase('waiting');
-    
+
     // 3초 대기
-    setTimeout(() => {
+    const t1 = setTimeout(() => {
       setStartupPhase('mark');
       Speech.speak('Take your mark', { language: 'en-US', rate: 0.9 });
-      
+
       // Take your mark 이후 1.5초 대기 후 부저
-      setTimeout(() => {
+      const t2 = setTimeout(() => {
         setStartupPhase('go');
         Speech.speak('Beep!', { pitch: 1.8, rate: 2.0 }); // 부저 소리 대체
-        
+
         // 실제 타이머 및 측정 시작
         setIsRecording(true);
         startTimeRef.current = Date.now();
         timerRef.current = setInterval(() => {
           setElapsedTime(Date.now() - startTimeRef.current);
         }, 10);
-        
+
         // 1초 뒤 화면의 GO 메시지 숨기기 위해 idle로 복귀
-        setTimeout(() => setStartupPhase('idle'), 1000);
+        const t3 = setTimeout(() => setStartupPhase('idle'), 1000);
+        timeoutsRef.current.push(t3);
 
       }, 1500);
+      timeoutsRef.current.push(t2);
     }, 3000);
+    timeoutsRef.current.push(t1);
   };
 
   const stopRecording = () => {

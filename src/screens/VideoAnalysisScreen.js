@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import { theme } from '../theme/theme';
-import { X, Activity, Zap, Play, Pause, Check, Cpu } from 'lucide-react-native';
+import { X, Activity, Zap, Play, Pause, Check } from 'lucide-react-native';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Slider from '@react-native-community/slider';
 
@@ -186,11 +186,11 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
         const debugRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
         const debugData = await debugRes.json();
         if (debugData.models) {
-          debugMsg = "\\n[사용 가능 모델]: " + debugData.models.map(m => m.name.replace('models/','')).filter(n => n.includes('gemini')).join(', ');
+          debugMsg = "\n[사용 가능 모델]: " + debugData.models.map(m => m.name.replace('models/','')).filter(n => n.includes('gemini')).join(', ');
         }
       } catch (err) {}
       
-      Alert.alert("분석 오류", `Gemini API 요청 실패: ${e.message}${debugMsg}\\n(파일 크기나 네트워크를 확인해주세요)`);
+      Alert.alert("분석 오류", `Gemini API 요청 실패: ${e.message}${debugMsg}\n(파일 크기나 네트워크를 확인해주세요)`);
       setPhase('error');
     }
   };
@@ -254,25 +254,21 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
 
   let currentDistance = 0;
   let displaySpeed = '0.00';
-  let progressPercent = 0;
 
   if (phase === 'analyzing' && startTime !== null && endTime !== null) {
     if (position < startTime) {
       currentDistance = 0;
       displaySpeed = '0.00';
-      progressPercent = 0;
     } else if (position > endTime) {
       currentDistance = poolLength;
       displaySpeed = '0.00';
-      progressPercent = 100;
     } else {
       const swimDurationMs = endTime - startTime;
       const elapsedTimeMs = position - startTime;
       const progressRatio = elapsedTimeMs / swimDurationMs;
-      
+
       currentDistance = Math.min(poolLength, Math.floor(progressRatio * poolLength));
-      progressPercent = progressRatio * 100;
-      
+
       const currentDataPoint = mockData.find(d => d.distance === Math.max(1, currentDistance));
       displaySpeed = currentDataPoint ? currentDataPoint.speed.toFixed(2) : '0.00';
     }
@@ -428,30 +424,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     borderRadius: theme.borderRadius.round,
   },
-  bottomControls: {
-    marginBottom: theme.spacing.xl,
-  },
-  aiBtn: {
-    backgroundColor: theme.colors.primary,
-    paddingVertical: theme.spacing.lg,
-    paddingHorizontal: theme.spacing.lg,
-    borderRadius: theme.borderRadius.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.spacing.md,
-  },
-  aiBtnTitle: {
-    color: theme.colors.background,
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  aiBtnSub: {
-    color: 'rgba(0,0,0,0.6)',
-    fontSize: 12,
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  
   // Loading Styles
   loadingContainer: {
     ...StyleSheet.absoluteFillObject,
@@ -528,18 +500,6 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: 'rgba(255,255,255,0.1)',
     marginVertical: theme.spacing.md,
-  },
-  progressContainer: {
-    width: '100%',
-    height: 6,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 3,
-    overflow: 'hidden',
-    marginBottom: theme.spacing.sm,
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: theme.colors.primary,
   },
   analyzingText: {
     color: theme.colors.primary,
