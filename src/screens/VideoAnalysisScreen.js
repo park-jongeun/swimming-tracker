@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator, Image, ScrollView } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import { theme } from '../theme/theme';
 import { X, Activity, Zap, Play, Pause, Check } from 'lucide-react-native';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -9,14 +10,20 @@ import Slider from '@react-native-community/slider';
 export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFinish, onCancel }) {
   const videoRef = useRef(null);
   const [status, setStatus] = useState({});
-  const [phase, setPhase] = useState('idle'); // idle -> uploading -> processing -> generating -> analyzing
-  
+  const [phase, setPhase] = useState('idle'); // idle -> uploading -> processing -> generating -> selecting -> analyzing
+
   const [startTime, setStartTime] = useState(null);
   const [endTime, setEndTime] = useState(null);
   const [mockData, setMockData] = useState([]);
   const [isFinished, setIsFinished] = useState(false);
   const [sliderValue, setSliderValue] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  const [startCandidates, setStartCandidates] = useState([]); // [{timeMs, reason, thumbUri}]
+  const [endCandidates, setEndCandidates] = useState([]);
+  const [allMilestones, setAllMilestones] = useState([]);
+  const [selectedStartIdx, setSelectedStartIdx] = useState(null);
+  const [selectedEndIdx, setSelectedEndIdx] = useState(null);
   
   const position = status.positionMillis || 0;
   const duration = status.durationMillis || 1;
@@ -64,6 +71,35 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
     setPhase('finished');
     const actualSwimDurationMs = endTime - startTime;
     onFinish(mockData, actualSwimDurationMs, true);
+  };
+
+  const safeThumbnail = async (timeMs) => {
+    try {
+      const { uri } = await VideoThumbnails.getThumbnailAsync(videoUri, {
+        time: Math.max(0, Math.floor(timeMs)),
+        quality: 0.6,
+      });
+      return uri;
+    } catch (err) {
+      console.warn('thumbnail failed', timeMs, err?.message);
+      return null;
+    }
+  };
+
+  const handleConfirmSelection = () => {
+    if (selectedStartIdx === null || selectedEndIdx === null) return;
+    const start = startCandidates[selectedStartIdx]?.timeMs;
+    const end = endCandidates[selectedEndIdx]?.timeMs;
+    if (start == null || end == null || end <= start) {
+      Alert.alert('선택 오류', '도착 시점은 출발 시점보다 뒤여야 합니다.');
+      return;
+    }
+    const filteredMilestones = (allMilestones || []).filter(
+      m => m.timeMs > start && m.timeMs < end && m.distance > 0 && m.distance < poolLength
+    );
+    setStartTime(start);
+    setEndTime(end);
+    startAiAnalysisPlayback(start, end, filteredMilestones);
   };
 
   const uploadAndAnalyzeWithGemini = async () => {
@@ -137,15 +173,35 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
         { apiVersion: "v1beta" }
       );
 
-      const prompt = `너는 프로 수영 코치야. 이 수영장의 규격은 ${poolLength}m야. 영상을 스캔해서 수영자의 위치와 속도를 추적해줘.
-수영장 환경(레인줄 색상, 5m 배영 깃발, 바닥 타일의 T자 라인, 25m 중앙 마커 등)에서 확인할 수 있는 **모든 시각적 지표**를 최대한 활용해.
-만약 긴 구간에서 시각적 지표가 보이지 않는다면, **수영자의 팔 젓기(스트로크 템포) 속도의 가감속 변화**를 분석해서 중간 통과 시간을 유추해.
-다음 데이터를 분석해서 순수 JSON으로 반환해:
-1. 'startTime' (밀리초): 도약 혹은 출발 시점
-2. 'endTime' (밀리초): 도착 시점
-3. 'milestones' 배열: 시각적 지표나 템포 변화로 식별/유추한 주요 거리(예: 5, 10, 15, 20... m)와 해당 지점을 통과한 시간(timeMs). (최소 2~3개 이상의 지점을 포함할 것)
-분석 과정을 1~2줄로 요약(reasoning)해.
-{"reasoning": "...", "startTime": 1200, "milestones": [{"distance": 5, "timeMs": 4500}, {"distance": 25, "timeMs": 22000}], "endTime": 45000}`;
+      const prompt = `너는 프로 수영 코치야. 이 수영장의 규격은 ${poolLength}m야. 영상(시각+오디오)을 정밀 분석해서 수영자의 출발/도착 시점과 구간 속도를 추적해줘.
+
+# 출발(start) 정의 — 다음 중 가장 먼저 관측되는 순간
+- 출발벽에 정지해 있던 피촬영자의 머리 또는 몸이 처음으로 움직이기 시작하는 프레임
+- 또는 오디오에서 출발 신호로 추정되는 강한 음(예: "고", "출발", "흡", "삐", 호각, 박수 등)이 들리는 순간
+출발 후보(startCandidates) **정확히 3개**를 시간 순서대로 제시해. 각 후보는 서로 다른 근거를 가져야 하고, 가능성이 가장 높은 것을 첫 번째에 둬.
+
+# 도착(end) 정의 — 다음을 만족하는 가장 이른 순간
+- 피촬영자의 손가락 끝이 도착벽에 처음 닿는 프레임 (터치 직전 마지막 스트로크가 아니라 실제 터치 순간)
+도착 후보(endCandidates) **정확히 3개**를 시간 순서대로 제시해. 가능성이 가장 높은 것을 첫 번째에 둬.
+
+# milestones (선택적, 2개 이상)
+출발과 도착 사이에서 시각적 지표(5m 배영 깃발, 바닥 T자 라인, 15m 마커, 레인줄 색상 변화, 25m 중앙 마커 등)나 스트로크 템포 변화로 식별 가능한 거리/시간 통과 지점. 거리는 0보다 크고 ${poolLength}m보다 작아야 함.
+
+순수 JSON만 반환:
+{
+  "reasoning": "1~2줄 요약",
+  "startCandidates": [
+    {"timeMs": 1200, "reason": "오디오 '출발' 음성 직후 머리 움직임 시작"},
+    {"timeMs": 1450, "reason": "어깨가 벽에서 분리되는 첫 프레임"},
+    {"timeMs": 900, "reason": "오디오 '흡' 강한 들숨 직전"}
+  ],
+  "endCandidates": [
+    {"timeMs": 44850, "reason": "오른손 손가락이 도착벽 접촉"},
+    {"timeMs": 45100, "reason": "양손 동시 터치 가능성"},
+    {"timeMs": 44600, "reason": "직전 스트로크 마지막 풀 동작 종료"}
+  ],
+  "milestones": [{"distance": 5, "timeMs": 4500}, {"distance": 25, "timeMs": 22000}]
+}`;
 
       const result = await model.generateContent({
         contents: [{
@@ -168,16 +224,39 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
 
       const responseText = result.response.text();
       const parsed = JSON.parse(responseText);
-      
-      // 방어 로직: 만약 잘못된 값이 오면 최소한의 거리라도 확보
-      const finalStart = parsed.startTime || 1000;
-      const finalEnd = parsed.endTime || (duration > 2000 ? duration - 1000 : 15000);
-      
-      setStartTime(finalStart);
-      setEndTime(finalEnd);
-      
-      startAiAnalysisPlayback(finalStart, finalEnd, parsed.milestones || []);
-      
+
+      const sanitize = (arr) =>
+        (Array.isArray(arr) ? arr : [])
+          .filter(c => typeof c?.timeMs === 'number' && c.timeMs >= 0)
+          .slice(0, 3);
+
+      let starts = sanitize(parsed.startCandidates);
+      let ends = sanitize(parsed.endCandidates);
+
+      // 방어 로직: 후보가 비면 단일값(startTime/endTime)이라도 살림
+      if (starts.length === 0 && typeof parsed.startTime === 'number') {
+        starts = [{ timeMs: parsed.startTime, reason: 'AI 단일 추정' }];
+      }
+      if (ends.length === 0 && typeof parsed.endTime === 'number') {
+        ends = [{ timeMs: parsed.endTime, reason: 'AI 단일 추정' }];
+      }
+      if (starts.length === 0) starts = [{ timeMs: 1000, reason: '기본값' }];
+      if (ends.length === 0) ends = [{ timeMs: Math.max(starts[0].timeMs + 5000, duration - 1000), reason: '기본값' }];
+
+      const startsWithThumbs = await Promise.all(
+        starts.map(async (c) => ({ ...c, thumbUri: await safeThumbnail(c.timeMs) }))
+      );
+      const endsWithThumbs = await Promise.all(
+        ends.map(async (c) => ({ ...c, thumbUri: await safeThumbnail(c.timeMs) }))
+      );
+
+      setStartCandidates(startsWithThumbs);
+      setEndCandidates(endsWithThumbs);
+      setAllMilestones(parsed.milestones || []);
+      setSelectedStartIdx(0);
+      setSelectedEndIdx(0);
+      setPhase('selecting');
+
     } catch (e) {
       console.error(e);
       // 디버깅을 위해 catch 블록에서 사용 가능한 모델 리스트를 조회 시도
@@ -245,7 +324,8 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
     const data = generateRealData(start, end, milestones);
     setMockData(data);
     setPhase('analyzing');
-    
+    setIsPlaying(true);
+
     if (videoRef.current) {
       const prePlayTime = Math.max(0, start - 1500);
       await videoRef.current.playFromPositionAsync(prePlayTime);
@@ -277,7 +357,7 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
   const getLoadingMessage = () => {
     if (phase === 'uploading') return "Gemini AI로 영상 전송 중...";
     if (phase === 'processing') return "AI가 비디오를 스캔 중입니다...";
-    if (phase === 'generating') return "출발 및 도착 시점을 정밀 분석 중...";
+    if (phase === 'generating') return "출발/도착 후보를 정밀 분석 중...";
     return "분석 준비 중...";
   };
 
@@ -290,7 +370,7 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
         useNativeControls={false}
         resizeMode={ResizeMode.CONTAIN}
         isLooping={false}
-        shouldPlay={isPlaying}
+        shouldPlay={phase === 'analyzing' && isPlaying}
         onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
       />
       
@@ -331,6 +411,70 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
               <Text style={styles.loadingTitle}>{getLoadingMessage()}</Text>
               <Text style={styles.loadingSub}>비디오 크기와 AI 추론에 따라 30초~1분 정도 소요될 수 있습니다.</Text>
             </View>
+          </View>
+        )}
+
+        {phase === 'selecting' && (
+          <View style={styles.selectingContainer}>
+            <ScrollView contentContainerStyle={styles.selectingScroll} showsVerticalScrollIndicator={false}>
+              <Text style={styles.selectingTitle}>AI가 찾은 후보 중 선택해주세요</Text>
+
+              <Text style={styles.selectingSection}>출발 시점 (머리 움직임 시작 / 출발 신호)</Text>
+              <View style={styles.candidateRow}>
+                {startCandidates.map((c, idx) => (
+                  <TouchableOpacity
+                    key={`s${idx}`}
+                    style={[styles.candidateCard, selectedStartIdx === idx && styles.candidateCardSelected]}
+                    onPress={() => setSelectedStartIdx(idx)}
+                    activeOpacity={0.8}
+                  >
+                    {c.thumbUri ? (
+                      <Image source={{ uri: c.thumbUri }} style={styles.candidateThumb} />
+                    ) : (
+                      <View style={[styles.candidateThumb, styles.candidateThumbPlaceholder]}>
+                        <Text style={styles.candidateThumbPlaceholderText}>썸네일 없음</Text>
+                      </View>
+                    )}
+                    <Text style={styles.candidateTime}>{formatTime(c.timeMs)}</Text>
+                    <Text style={styles.candidateReason} numberOfLines={2}>{c.reason || ''}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.selectingSection}>도착 시점 (손이 벽에 닿는 순간)</Text>
+              <View style={styles.candidateRow}>
+                {endCandidates.map((c, idx) => (
+                  <TouchableOpacity
+                    key={`e${idx}`}
+                    style={[styles.candidateCard, selectedEndIdx === idx && styles.candidateCardSelected]}
+                    onPress={() => setSelectedEndIdx(idx)}
+                    activeOpacity={0.8}
+                  >
+                    {c.thumbUri ? (
+                      <Image source={{ uri: c.thumbUri }} style={styles.candidateThumb} />
+                    ) : (
+                      <View style={[styles.candidateThumb, styles.candidateThumbPlaceholder]}>
+                        <Text style={styles.candidateThumbPlaceholderText}>썸네일 없음</Text>
+                      </View>
+                    )}
+                    <Text style={styles.candidateTime}>{formatTime(c.timeMs)}</Text>
+                    <Text style={styles.candidateReason} numberOfLines={2}>{c.reason || ''}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.confirmBtn,
+                  (selectedStartIdx === null || selectedEndIdx === null) && styles.confirmBtnDisabled,
+                ]}
+                onPress={handleConfirmSelection}
+                disabled={selectedStartIdx === null || selectedEndIdx === null}
+              >
+                <Check color={theme.colors.background} size={24} />
+                <Text style={styles.confirmBtnText}>이 구간으로 분석</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         )}
 
@@ -511,6 +655,92 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
   },
   
+  // Selecting Phase Styles
+  selectingContainer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+  },
+  selectingScroll: {
+    padding: theme.spacing.lg,
+    paddingTop: theme.spacing.xl * 2.5,
+    paddingBottom: theme.spacing.xl,
+  },
+  selectingTitle: {
+    color: theme.colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: theme.spacing.lg,
+  },
+  selectingSection: {
+    color: theme.colors.primary,
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: theme.spacing.lg,
+    marginBottom: theme.spacing.sm,
+  },
+  candidateRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: theme.spacing.sm,
+  },
+  candidateCard: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.sm,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  candidateCardSelected: {
+    borderColor: theme.colors.primary,
+    backgroundColor: 'rgba(0, 240, 255, 0.15)',
+  },
+  candidateThumb: {
+    width: '100%',
+    aspectRatio: 9 / 16,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: '#111',
+  },
+  candidateThumbPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  candidateThumbPlaceholderText: {
+    color: theme.colors.textMuted,
+    fontSize: 11,
+  },
+  candidateTime: {
+    color: theme.colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: theme.spacing.xs,
+    fontVariant: ['tabular-nums'],
+  },
+  candidateReason: {
+    color: theme.colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  confirmBtn: {
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.borderRadius.lg,
+    paddingVertical: theme.spacing.lg,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: theme.spacing.sm,
+    marginTop: theme.spacing.xl,
+  },
+  confirmBtnDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  confirmBtnText: {
+    color: theme.colors.background,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+
   // Chart Styles
   chartContainer: {
     flexDirection: 'row',
