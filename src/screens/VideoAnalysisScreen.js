@@ -26,6 +26,10 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
   const [selectedEndIdx, setSelectedEndIdx] = useState(null);
   const [selectStep, setSelectStep] = useState('start'); // start | end
   const [thumbAspectRatio, setThumbAspectRatio] = useState(9 / 16);
+  const [startOffsetMs, setStartOffsetMs] = useState(0);
+  const [endOffsetMs, setEndOffsetMs] = useState(0);
+  const [startPreviewUri, setStartPreviewUri] = useState(null);
+  const [endPreviewUri, setEndPreviewUri] = useState(null);
   
   const position = status.positionMillis || 0;
   const duration = status.durationMillis || 1;
@@ -97,20 +101,35 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
     return `${m}:${s}.${cs}`;
   };
 
+  const startAbsMs = selectedStartIdx != null && startCandidates[selectedStartIdx]
+    ? Math.max(0, startCandidates[selectedStartIdx].timeMs + startOffsetMs)
+    : null;
+  const endAbsMs = selectedEndIdx != null && endCandidates[selectedEndIdx]
+    ? Math.max(0, endCandidates[selectedEndIdx].timeMs + endOffsetMs)
+    : null;
+
+  const handlePickCandidate = (idx) => {
+    if (selectStep === 'start') {
+      setSelectedStartIdx(idx);
+      setStartOffsetMs(0);
+    } else {
+      setSelectedEndIdx(idx);
+      setEndOffsetMs(0);
+    }
+  };
+
   const handleConfirmSelection = () => {
-    if (selectedStartIdx === null || selectedEndIdx === null) return;
-    const start = startCandidates[selectedStartIdx]?.timeMs;
-    const end = endCandidates[selectedEndIdx]?.timeMs;
-    if (start == null || end == null || end <= start) {
+    if (startAbsMs == null || endAbsMs == null) return;
+    if (endAbsMs <= startAbsMs) {
       Alert.alert('선택 오류', '도착 시점은 출발 시점보다 뒤여야 합니다.');
       return;
     }
     const filteredMilestones = (allMilestones || []).filter(
-      m => m.timeMs > start && m.timeMs < end && m.distance > 0 && m.distance < poolLength
+      m => m.timeMs > startAbsMs && m.timeMs < endAbsMs && m.distance > 0 && m.distance < poolLength
     );
-    setStartTime(start);
-    setEndTime(end);
-    startAiAnalysisPlayback(start, end, filteredMilestones);
+    setStartTime(startAbsMs);
+    setEndTime(endAbsMs);
+    startAiAnalysisPlayback(startAbsMs, endAbsMs, filteredMilestones);
   };
 
   const uploadAndAnalyzeWithGemini = async () => {
@@ -343,6 +362,26 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
     }
   }, []);
 
+  // 출발 미세조정 미리보기 (디바운스)
+  useEffect(() => {
+    if (phase !== 'selecting' || selectStep !== 'start' || startAbsMs == null) return;
+    const handle = setTimeout(async () => {
+      const t = await safeThumbnail(startAbsMs);
+      setStartPreviewUri(t?.uri ?? null);
+    }, 150);
+    return () => clearTimeout(handle);
+  }, [startAbsMs, phase, selectStep]);
+
+  // 도착 미세조정 미리보기 (디바운스)
+  useEffect(() => {
+    if (phase !== 'selecting' || selectStep !== 'end' || endAbsMs == null) return;
+    const handle = setTimeout(async () => {
+      const t = await safeThumbnail(endAbsMs);
+      setEndPreviewUri(t?.uri ?? null);
+    }, 150);
+    return () => clearTimeout(handle);
+  }, [endAbsMs, phase, selectStep]);
+
   const generateRealData = (start, end, milestones) => {
     const detailedData = [];
     
@@ -480,13 +519,17 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
           const isLandscape = thumbAspectRatio > 1.05;
           const currentList = selectStep === 'start' ? startCandidates : endCandidates;
           const currentIdx = selectStep === 'start' ? selectedStartIdx : selectedEndIdx;
-          const setCurrentIdx = selectStep === 'start' ? setSelectedStartIdx : setSelectedEndIdx;
           const stepTitle = selectStep === 'start' ? '출발 시점을 선택해주세요' : '도착 시점을 선택해주세요';
           const stepHint = selectStep === 'start'
             ? '머리가 움직이기 시작하거나 출발 신호가 들리는 순간'
             : '손이 벽에 처음 닿는 순간';
           const canAdvance = currentIdx !== null;
           const isLastStep = selectStep === 'end';
+          const fineOffset = selectStep === 'start' ? startOffsetMs : endOffsetMs;
+          const setFineOffset = selectStep === 'start' ? setStartOffsetMs : setEndOffsetMs;
+          const fineRangeMs = selectStep === 'start' ? 500 : 300;
+          const previewUri = selectStep === 'start' ? startPreviewUri : endPreviewUri;
+          const absMs = selectStep === 'start' ? startAbsMs : endAbsMs;
 
           return (
             <View style={styles.selectingContainer}>
@@ -520,7 +563,7 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
                             isLandscape ? styles.candidateCardWide : styles.candidateCard,
                             currentIdx === idx && styles.candidateCardSelected,
                           ]}
-                          onPress={() => setCurrentIdx(idx)}
+                          onPress={() => handlePickCandidate(idx)}
                           activeOpacity={0.8}
                         >
                           {c.thumbUri ? (
@@ -548,6 +591,45 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
                       );
                     })}
                   </View>
+
+                  {currentIdx != null && (
+                    <View style={styles.fineTuneSection}>
+                      <Text style={styles.fineTuneLabel}>프레임 미세조정</Text>
+                      <View style={[styles.finePreviewWrap, { aspectRatio: thumbAspectRatio }]}>
+                        {previewUri ? (
+                          <Image source={{ uri: previewUri }} style={styles.finePreviewImg} resizeMode="cover" />
+                        ) : (
+                          <View style={[styles.finePreviewImg, styles.candidateThumbPlaceholder]}>
+                            <ActivityIndicator color={theme.colors.primary} />
+                          </View>
+                        )}
+                      </View>
+                      <View style={styles.fineTimeRow}>
+                        <Text style={styles.fineTimeAbs}>{formatTimePrecise(absMs ?? 0)}</Text>
+                        <Text style={styles.fineTimeOffset}>
+                          {fineOffset === 0 ? '기준' : `${fineOffset > 0 ? '+' : ''}${(fineOffset / 1000).toFixed(2)}s`}
+                        </Text>
+                      </View>
+                      <Slider
+                        style={styles.fineSlider}
+                        minimumValue={-fineRangeMs}
+                        maximumValue={fineRangeMs}
+                        value={fineOffset}
+                        step={1}
+                        onValueChange={setFineOffset}
+                        minimumTrackTintColor={theme.colors.primary}
+                        maximumTrackTintColor="rgba(255,255,255,0.2)"
+                        thumbTintColor={theme.colors.primary}
+                      />
+                      <View style={styles.fineSliderLabels}>
+                        <Text style={styles.fineSliderLabel}>−{(fineRangeMs / 1000).toFixed(1)}s</Text>
+                        <TouchableOpacity onPress={() => setFineOffset(0)} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
+                          <Text style={styles.fineSliderReset}>기준으로</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.fineSliderLabel}>+{(fineRangeMs / 1000).toFixed(1)}s</Text>
+                      </View>
+                    </View>
+                  )}
                 </ScrollView>
 
                 <View style={styles.wizardFooter}>
@@ -862,6 +944,68 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing.lg,
     paddingTop: theme.spacing.sm,
     paddingBottom: theme.spacing.lg,
+  },
+  fineTuneSection: {
+    marginTop: theme.spacing.xl,
+    paddingTop: theme.spacing.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.15)',
+  },
+  fineTuneLabel: {
+    color: theme.colors.primary,
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: theme.spacing.sm,
+    letterSpacing: 0.5,
+  },
+  finePreviewWrap: {
+    width: '100%',
+    backgroundColor: '#111',
+    borderRadius: theme.borderRadius.md,
+    overflow: 'hidden',
+  },
+  finePreviewImg: {
+    width: '100%',
+    height: '100%',
+  },
+  fineTimeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginTop: theme.spacing.sm,
+  },
+  fineTimeAbs: {
+    color: theme.colors.text,
+    fontSize: 16,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  fineTimeOffset: {
+    color: theme.colors.primary,
+    fontSize: 13,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  fineSlider: {
+    width: '100%',
+    height: 36,
+    marginTop: theme.spacing.xs,
+  },
+  fineSliderLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: -theme.spacing.xs,
+  },
+  fineSliderLabel: {
+    color: theme.colors.textMuted,
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
+  },
+  fineSliderReset: {
+    color: theme.colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
   },
   confirmBtn: {
     backgroundColor: theme.colors.primary,
