@@ -186,30 +186,40 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
 
       const prompt = `너는 프로 수영 코치야. 이 수영장의 규격은 ${poolLength}m야. 영상(시각+오디오)을 정밀 분석해서 수영자의 출발/도착 시점과 구간 속도를 추적해줘.
 
-# 출발(start) 정의 — 다음 중 가장 먼저 관측되는 순간
-- 출발벽에 정지해 있던 피촬영자의 머리 또는 몸이 처음으로 움직이기 시작하는 프레임
-- 또는 오디오에서 출발 신호로 추정되는 강한 음(예: "고", "출발", "흡", "삐", 호각, 박수 등)이 들리는 순간
-출발 후보(startCandidates) **정확히 3개**를 시간 순서대로 제시해. 각 후보는 서로 다른 근거를 가져야 하고, 가능성이 가장 높은 것을 첫 번째에 둬.
+# 출발(start) 정의
+- 정지해 있던 피촬영자의 머리/몸이 처음으로 움직이기 시작하는 프레임
+- 또는 오디오 출발 신호("고", "출발", "흡", "삐", 호각, 박수 등)가 들리는 순간
 
-# 도착(end) 정의 — 다음을 만족하는 가장 이른 순간
-- 피촬영자의 손가락 끝이 도착벽에 처음 닿는 프레임 (터치 직전 마지막 스트로크가 아니라 실제 터치 순간)
-도착 후보(endCandidates) **정확히 3개**를 시간 순서대로 제시해. 가능성이 가장 높은 것을 첫 번째에 둬.
+# 출발 후보 (startCandidates) - 반드시 시각적으로 명확히 구분되는 3개
+1번 후보(EARLY): 가장 이른 가능성 — 아직 움직이지 않은 마지막 프레임 또는 신호 직전
+2번 후보(BEST): AI가 가장 확신하는 시점 — 첫 움직임이 명확히 감지된 프레임
+3번 후보(LATE): 가장 늦은 가능성 — 이미 명확히 출발/도약한 직후 프레임
+**세 후보 시간 간격 최소 500ms 이상**. 1·3번이 너무 가까우면 더 멀리 떨어진 시점을 제안해.
 
-# milestones (선택적, 2개 이상)
-출발과 도착 사이에서 시각적 지표(5m 배영 깃발, 바닥 T자 라인, 15m 마커, 레인줄 색상 변화, 25m 중앙 마커 등)나 스트로크 템포 변화로 식별 가능한 거리/시간 통과 지점. 거리는 0보다 크고 ${poolLength}m보다 작아야 함.
+# 도착(end) 정의
+- 피촬영자의 손가락 끝이 도착벽에 처음 닿는 프레임
 
-순수 JSON만 반환:
+# 도착 후보 (endCandidates) - 시각적으로 구분되는 3개
+1번 후보(EARLY): 가장 이른 터치 가능성 — 첫 손가락 접촉으로 보이는 프레임
+2번 후보(BEST): AI가 가장 확신하는 터치 프레임
+3번 후보(LATE): 가장 늦은 가능성 — 확실히 터치 완료된 직후 프레임
+**세 후보 시간 간격 최소 200ms 이상**.
+
+# milestones (선택, 2개 이상)
+출발-도착 사이 시각적 지표(5m 배영 깃발, 바닥 T자, 15m·25m 마커, 레인줄 색상)나 스트로크 템포로 식별한 (distance, timeMs). 0 < distance < ${poolLength}.
+
+순수 JSON만 반환. 후보 배열은 반드시 [EARLY, BEST, LATE] 순서.
 {
   "reasoning": "1~2줄 요약",
   "startCandidates": [
-    {"timeMs": 1200, "reason": "오디오 '출발' 음성 직후 머리 움직임 시작"},
-    {"timeMs": 1450, "reason": "어깨가 벽에서 분리되는 첫 프레임"},
-    {"timeMs": 900, "reason": "오디오 '흡' 강한 들숨 직전"}
+    {"timeMs": 900, "reason": "출발 신호 직전 정지 자세 마지막 프레임", "kind": "EARLY"},
+    {"timeMs": 1450, "reason": "어깨와 머리가 벽에서 분리되는 첫 프레임", "kind": "BEST"},
+    {"timeMs": 2100, "reason": "발이 벽을 완전히 떠나 입수 직전", "kind": "LATE"}
   ],
   "endCandidates": [
-    {"timeMs": 44850, "reason": "오른손 손가락이 도착벽 접촉"},
-    {"timeMs": 45100, "reason": "양손 동시 터치 가능성"},
-    {"timeMs": 44600, "reason": "직전 스트로크 마지막 풀 동작 종료"}
+    {"timeMs": 44600, "reason": "오른손 손가락 끝이 처음 벽에 닿는 프레임", "kind": "EARLY"},
+    {"timeMs": 44850, "reason": "손바닥 전체가 벽에 밀착", "kind": "BEST"},
+    {"timeMs": 45100, "reason": "터치 완료 후 손목이 꺾이는 순간", "kind": "LATE"}
   ],
   "milestones": [{"distance": 5, "timeMs": 4500}, {"distance": 25, "timeMs": 22000}]
 }`;
@@ -241,8 +251,31 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
           .filter(c => typeof c?.timeMs === 'number' && c.timeMs >= 0)
           .slice(0, 3);
 
+      const ensureMinSpread = (candidates, minSpreadMs, maxTimeMs) => {
+        if (candidates.length < 2) return candidates;
+        const times = candidates.map(c => c.timeMs);
+        const span = Math.max(...times) - Math.min(...times);
+        if (span >= minSpreadMs) return candidates;
+        const bestIdx = Math.max(0, candidates.findIndex(c => c.kind === 'BEST'));
+        const anchor = candidates[bestIdx].timeMs;
+        const half = Math.floor(minSpreadMs / 2);
+        const earlyTime = Math.max(0, anchor - half);
+        const lateTime = Math.min(maxTimeMs, anchor + half);
+        return candidates.map((c, i) => {
+          if (i === bestIdx) return c;
+          // remaining candidates: alternate early/late based on original order vs anchor
+          if (c.kind === 'EARLY' || c.timeMs <= anchor) {
+            return { ...c, timeMs: earlyTime, spread: true };
+          }
+          return { ...c, timeMs: lateTime, spread: true };
+        });
+      };
+
       let starts = sanitize(parsed.startCandidates);
       let ends = sanitize(parsed.endCandidates);
+      const videoMax = Math.max(duration || 60000, 60000);
+      starts = ensureMinSpread(starts, 1200, videoMax);
+      ends = ensureMinSpread(ends, 400, videoMax);
 
       // 방어 로직: 후보가 비면 단일값(startTime/endTime)이라도 살림
       if (starts.length === 0 && typeof parsed.startTime === 'number') {
@@ -273,11 +306,16 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
         setThumbAspectRatio(firstWithDims.thumbWidth / firstWithDims.thumbHeight);
       }
 
+      const findBestIdx = (cands) => {
+        const i = cands.findIndex(c => c.kind === 'BEST');
+        return i >= 0 ? i : 0;
+      };
+
       setStartCandidates(startsWithThumbs);
       setEndCandidates(endsWithThumbs);
       setAllMilestones(parsed.milestones || []);
-      setSelectedStartIdx(0);
-      setSelectedEndIdx(0);
+      setSelectedStartIdx(findBestIdx(startsWithThumbs));
+      setSelectedEndIdx(findBestIdx(endsWithThumbs));
       setSelectStep('start');
       setPhase('selecting');
 
@@ -470,31 +508,45 @@ export default function VideoAnalysisScreen({ poolLength, videoUri, apiKey, onFi
                   <Text style={styles.selectingHint}>{stepHint}</Text>
 
                   <View style={isLandscape ? styles.candidateColumn : styles.candidateRow}>
-                    {currentList.map((c, idx) => (
-                      <TouchableOpacity
-                        key={`${selectStep}${idx}`}
-                        style={[
-                          isLandscape ? styles.candidateCardWide : styles.candidateCard,
-                          currentIdx === idx && styles.candidateCardSelected,
-                        ]}
-                        onPress={() => setCurrentIdx(idx)}
-                        activeOpacity={0.8}
-                      >
-                        {c.thumbUri ? (
-                          <Image
-                            source={{ uri: c.thumbUri }}
-                            style={[styles.candidateThumb, { aspectRatio: thumbAspectRatio }]}
-                            resizeMode="cover"
-                          />
-                        ) : (
-                          <View style={[styles.candidateThumb, styles.candidateThumbPlaceholder, { aspectRatio: thumbAspectRatio }]}>
-                            <Text style={styles.candidateThumbPlaceholderText}>썸네일 없음</Text>
+                    {currentList.map((c, idx) => {
+                      const kindLabel = c.kind === 'BEST' ? 'AI 추정'
+                        : c.kind === 'EARLY' ? '이른 시점'
+                        : c.kind === 'LATE' ? '늦은 시점'
+                        : '';
+                      return (
+                        <TouchableOpacity
+                          key={`${selectStep}${idx}`}
+                          style={[
+                            isLandscape ? styles.candidateCardWide : styles.candidateCard,
+                            currentIdx === idx && styles.candidateCardSelected,
+                          ]}
+                          onPress={() => setCurrentIdx(idx)}
+                          activeOpacity={0.8}
+                        >
+                          {c.thumbUri ? (
+                            <Image
+                              source={{ uri: c.thumbUri }}
+                              style={[styles.candidateThumb, { aspectRatio: thumbAspectRatio }]}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <View style={[styles.candidateThumb, styles.candidateThumbPlaceholder, { aspectRatio: thumbAspectRatio }]}>
+                              <Text style={styles.candidateThumbPlaceholderText}>썸네일 없음</Text>
+                            </View>
+                          )}
+                          <View style={styles.candidateMeta}>
+                            <Text style={styles.candidateTime}>{formatTimePrecise(c.timeMs)}</Text>
+                            {kindLabel ? (
+                              <Text style={[
+                                styles.candidateKind,
+                                c.kind === 'BEST' && styles.candidateKindBest,
+                              ]}>{kindLabel}</Text>
+                            ) : null}
                           </View>
-                        )}
-                        <Text style={styles.candidateTime}>{formatTimePrecise(c.timeMs)}</Text>
-                        <Text style={styles.candidateReason}>{c.reason || ''}</Text>
-                      </TouchableOpacity>
-                    ))}
+                          <Text style={styles.candidateReason}>{c.reason || ''}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 </ScrollView>
 
@@ -780,12 +832,25 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     fontSize: 11,
   },
+  candidateMeta: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginTop: theme.spacing.sm,
+  },
   candidateTime: {
     color: theme.colors.text,
     fontSize: 14,
     fontWeight: '700',
-    marginTop: theme.spacing.sm,
     fontVariant: ['tabular-nums'],
+  },
+  candidateKind: {
+    color: theme.colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  candidateKindBest: {
+    color: theme.colors.primary,
   },
   candidateReason: {
     color: theme.colors.textMuted,
