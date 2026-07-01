@@ -5,12 +5,13 @@ import MainScreen from './src/screens/MainScreen';
 import TrackingScreen from './src/screens/TrackingScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import VideoAnalysisScreen from './src/screens/VideoAnalysisScreen';
+import GalleryScreen from './src/screens/GalleryScreen';
 import { theme } from './src/theme/theme';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState('main'); // main, tracking, analysis, dashboard
+  const [currentScreen, setCurrentScreen] = useState('main'); // main, tracking, analysis, dashboard, gallery
   const [poolLength, setPoolLength] = useState(50);
   const [sessionResult, setSessionResult] = useState(null); // { data: laps or detailedData, totalTime, isAiAnalyzed }
   const [videoUri, setVideoUri] = useState(null);
@@ -82,6 +83,7 @@ export default function App() {
         <MainScreen 
           onStart={handleStart} 
           onUpload={handleUpload} 
+          onViewGallery={() => setCurrentScreen('gallery')}
           apiKey={apiKey}
           setApiKey={handleSetApiKey}
         />
@@ -100,6 +102,12 @@ export default function App() {
           apiKey={apiKey}
           onFinish={handleFinishTracking}
           onCancel={handleCancelTracking}
+        />
+      )}
+      {currentScreen === 'gallery' && (
+        <GalleryScreen
+          onBack={() => setCurrentScreen('main')}
+          onAnalyzeVideo={(uri) => handleUpload(poolLength, uri)}
         />
       )}
       {currentScreen === 'dashboard' && sessionResult && (

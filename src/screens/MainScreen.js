@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { theme } from '../theme/theme';
-import { Activity, Ruler, Upload, Key } from 'lucide-react-native';
+import { Activity, Ruler, Upload, Key, Folder } from 'lucide-react-native';
 
-export default function MainScreen({ onStart, onUpload, apiKey, setApiKey }) {
+export default function MainScreen({ onStart, onUpload, onViewGallery, apiKey, setApiKey }) {
   const [poolLength, setPoolLength] = useState('50');
 
   const pickVideo = async () => {
@@ -67,13 +67,23 @@ export default function MainScreen({ onStart, onUpload, apiKey, setApiKey }) {
           <Text style={styles.actionBtnText}>실시간 측정</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity 
-          style={[styles.actionBtn, styles.uploadBtn]} 
-          onPress={pickVideo}
-        >
-          <Upload color={theme.colors.primary} size={24} />
-          <Text style={styles.uploadBtnText}>영상 업로드</Text>
-        </TouchableOpacity>
+        <View style={styles.secondaryActionRow}>
+          <TouchableOpacity 
+            style={[styles.actionBtn, styles.secondaryBtn]} 
+            onPress={pickVideo}
+          >
+            <Upload color={theme.colors.primary} size={24} />
+            <Text style={styles.secondaryBtnText}>영상 업로드</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.actionBtn, styles.secondaryBtn]} 
+            onPress={onViewGallery}
+          >
+            <Folder color={theme.colors.primary} size={24} />
+            <Text style={styles.secondaryBtnText}>내 보관함</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.apiCard}>
@@ -189,7 +199,13 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 8,
   },
-  uploadBtn: {
+  secondaryActionRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.md,
+    marginTop: theme.spacing.md,
+  },
+  secondaryBtn: {
+    flex: 1,
     backgroundColor: 'rgba(0, 240, 255, 0.1)',
     borderWidth: 1,
     borderColor: theme.colors.primary,
@@ -199,9 +215,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  uploadBtnText: {
+  secondaryBtnText: {
     color: theme.colors.primary,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
   },
   apiCard: {

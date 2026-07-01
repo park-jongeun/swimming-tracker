@@ -1,26 +1,41 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Alert } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import * as Speech from 'expo-speech';
+import * as FileSystem from 'expo-file-system';
 import { theme } from '../theme/theme';
-import { StopCircle, Flag, Play, X } from 'lucide-react-native';
+import { StopCircle, Flag, Play, X, Save } from 'lucide-react-native';
 
 export default function TrackingScreen({ poolLength, onFinish, onCancel }) {
   const [permission, requestPermission] = useCameraPermissions();
+  const [micPermission, requestMicPermission] = useMicrophonePermissions();
   const [isRecording, setIsRecording] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [startupPhase, setStartupPhase] = useState('idle'); // idle, waiting, mark, go
   const [elapsedTime, setElapsedTime] = useState(0); // in milliseconds
   const [laps, setLaps] = useState([]);
   
+  const cameraRef = useRef(null);
   const timerRef = useRef(null);
   const startTimeRef = useRef(null);
+  const lapsRef = useRef([]);
+  const elapsedTimeRef = useRef(0);
 
   useEffect(() => {
-    if (!permission) {
-      requestPermission();
+    lapsRef.current = laps;
+  }, [laps]);
+
+  useEffect(() => {
+    elapsedTimeRef.current = elapsedTime;
+  }, [elapsedTime]);
+
+  useEffect(() => {
+    if (!permission?.granted || !micPermission?.granted) {
+      if (!permission?.granted) requestPermission();
+      if (!micPermission?.granted) requestMicPermission();
     }
     return () => clearInterval(timerRef.current);
-  }, [permission]);
+  }, [permission, micPermission]);
 
   const formatTime = (ms) => {
     const totalSeconds = Math.floor(ms / 1000);
@@ -50,6 +65,34 @@ export default function TrackingScreen({ poolLength, onFinish, onCancel }) {
           setElapsedTime(Date.now() - startTimeRef.current);
         }, 10);
         
+        // 카메라 비디오 녹화 시작
+        if (cameraRef.current) {
+          cameraRef.current.recordAsync().then(async (result) => {
+            try {
+              const folderPath = FileSystem.documentDirectory + 'SwimTracker_Videos/';
+              const folderInfo = await FileSystem.getInfoAsync(folderPath);
+              if (!folderInfo.exists) {
+                await FileSystem.makeDirectoryAsync(folderPath, { intermediates: true });
+              }
+              const fileName = `swim_${Date.now()}.mp4`;
+              const newPath = folderPath + fileName;
+              await FileSystem.moveAsync({
+                from: result.uri,
+                to: newPath
+              });
+              console.log('Video saved to internal folder:', newPath);
+              onFinish(lapsRef.current, elapsedTimeRef.current);
+            } catch (e) {
+              console.error('Failed to save video:', e);
+              Alert.alert('저장 오류', '영상을 저장하는 데 실패했습니다.');
+              onFinish(lapsRef.current, elapsedTimeRef.current);
+            }
+          }).catch(e => {
+            console.error('Record async error:', e);
+            onFinish(lapsRef.current, elapsedTimeRef.current);
+          });
+        }
+        
         // 1초 뒤 화면의 GO 메시지 숨기기 위해 idle로 복귀
         setTimeout(() => setStartupPhase('idle'), 1000);
 
@@ -59,8 +102,13 @@ export default function TrackingScreen({ poolLength, onFinish, onCancel }) {
 
   const stopRecording = () => {
     setIsRecording(false);
+    setIsSaving(true);
     clearInterval(timerRef.current);
-    onFinish(laps, elapsedTime);
+    if (cameraRef.current) {
+      cameraRef.current.stopRecording();
+    } else {
+      onFinish(lapsRef.current, elapsedTimeRef.current);
+    }
   };
 
   const markLap = () => {
@@ -79,11 +127,14 @@ export default function TrackingScreen({ poolLength, onFinish, onCancel }) {
     }]);
   };
 
-  if (!permission?.granted) {
+  if (!permission?.granted || !micPermission?.granted) {
     return (
       <View style={styles.container}>
-        <Text style={styles.text}>카메라 권한이 필요합니다.</Text>
-        <TouchableOpacity style={styles.btn} onPress={requestPermission}>
+        <Text style={styles.text}>카메라 및 마이크 권한이 필요합니다.</Text>
+        <TouchableOpacity style={styles.btn} onPress={() => {
+          requestPermission();
+          requestMicPermission();
+        }}>
           <Text style={styles.btnText}>권한 허용</Text>
         </TouchableOpacity>
       </View>
@@ -92,7 +143,7 @@ export default function TrackingScreen({ poolLength, onFinish, onCancel }) {
 
   return (
     <View style={styles.container}>
-      <CameraView style={StyleSheet.absoluteFillObject} facing="back" />
+      <CameraView ref={cameraRef} mode="video" style={StyleSheet.absoluteFillObject} facing="back" />
       <SafeAreaView style={styles.overlay}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onCancel} style={styles.iconBtn}>
@@ -115,7 +166,12 @@ export default function TrackingScreen({ poolLength, onFinish, onCancel }) {
         </View>
 
         <View style={styles.controls}>
-          {isRecording ? (
+          {isSaving ? (
+            <View style={[styles.controlBtn, styles.disabledStartBtn]}>
+              <Save color={theme.colors.textMuted} size={32} />
+              <Text style={styles.controlText}>저장 중...</Text>
+            </View>
+          ) : isRecording ? (
             <>
               <TouchableOpacity style={[styles.controlBtn, styles.stopBtn]} onPress={stopRecording}>
                 <StopCircle color={theme.colors.text} size={32} />
