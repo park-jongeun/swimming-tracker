@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { theme } from '../theme/theme';
-import { Activity, Ruler, Upload, Key } from 'lucide-react-native';
+import { Activity, Ruler, Upload, Key, Folder } from 'lucide-react-native';
 
-export default function MainScreen({ onStart, onUpload, apiKey, setApiKey }) {
+export default function MainScreen({ onStart, onUpload, onLibrary, apiKey, setApiKey }) {
   const [poolLength, setPoolLength] = useState('50');
 
   const pickVideo = async () => {
@@ -75,6 +75,14 @@ export default function MainScreen({ onStart, onUpload, apiKey, setApiKey }) {
           <Text style={styles.uploadBtnText}>영상 업로드</Text>
         </TouchableOpacity>
       </View>
+
+      <TouchableOpacity 
+        style={[styles.actionBtn, styles.libraryBtn]} 
+        onPress={onLibrary}
+      >
+        <Folder color={theme.colors.text} size={24} />
+        <Text style={styles.libraryBtnText}>보관함 (저장된 영상)</Text>
+      </TouchableOpacity>
 
       <View style={styles.apiCard}>
         <View style={styles.apiHeader}>
@@ -201,6 +209,17 @@ const styles = StyleSheet.create({
   },
   uploadBtnText: {
     color: theme.colors.primary,
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  libraryBtn: {
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginTop: theme.spacing.md,
+  },
+  libraryBtnText: {
+    color: theme.colors.text,
     fontSize: 18,
     fontWeight: 'bold',
   },

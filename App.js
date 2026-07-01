@@ -5,14 +5,15 @@ import MainScreen from './src/screens/MainScreen';
 import TrackingScreen from './src/screens/TrackingScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import VideoAnalysisScreen from './src/screens/VideoAnalysisScreen';
+import LibraryScreen from './src/screens/LibraryScreen';
 import { theme } from './src/theme/theme';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState('main'); // main, tracking, analysis, dashboard
+  const [currentScreen, setCurrentScreen] = useState('main'); // main, tracking, analysis, dashboard, library
   const [poolLength, setPoolLength] = useState(50);
-  const [sessionResult, setSessionResult] = useState(null); // { data: laps or detailedData, totalTime, isAiAnalyzed }
+  const [sessionResult, setSessionResult] = useState(null); // { data, totalTime, isAiAnalyzed, isReadOnly, videoUri }
   const [videoUri, setVideoUri] = useState(null);
   const [apiKey, setApiKey] = useState('');
 
@@ -62,7 +63,7 @@ export default function App() {
   };
 
   const handleFinishTracking = (data, totalTime, isAiAnalyzed = false) => {
-    setSessionResult({ data, totalTime, isAiAnalyzed });
+    setSessionResult({ data, totalTime, isAiAnalyzed, isReadOnly: false, videoUri });
     setCurrentScreen('dashboard');
   };
 
@@ -75,6 +76,27 @@ export default function App() {
     setCurrentScreen('main');
   };
 
+  const handleLibrary = () => {
+    setCurrentScreen('library');
+  };
+
+  const handleLibraryBack = () => {
+    setCurrentScreen('main');
+  };
+
+  const handleViewRecord = (record) => {
+    setPoolLength(record.poolLength || 50);
+    setVideoUri(record.videoUri);
+    setSessionResult({
+      data: record.data,
+      totalTime: record.totalTime,
+      isAiAnalyzed: record.isAiAnalyzed,
+      isReadOnly: true,
+      videoUri: record.videoUri
+    });
+    setCurrentScreen('dashboard');
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -82,6 +104,7 @@ export default function App() {
         <MainScreen 
           onStart={handleStart} 
           onUpload={handleUpload} 
+          onLibrary={handleLibrary}
           apiKey={apiKey}
           setApiKey={handleSetApiKey}
         />
@@ -108,7 +131,15 @@ export default function App() {
           totalTime={sessionResult.totalTime}
           poolLength={poolLength}
           isAiAnalyzed={sessionResult.isAiAnalyzed}
+          videoUri={sessionResult.videoUri}
+          isReadOnly={sessionResult.isReadOnly}
           onReset={handleReset}
+        />
+      )}
+      {currentScreen === 'library' && (
+        <LibraryScreen
+          onBack={handleLibraryBack}
+          onViewRecord={handleViewRecord}
         />
       )}
     </View>
